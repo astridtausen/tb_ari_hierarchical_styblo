@@ -1,0 +1,238 @@
+---
+title: "Preparation of raw data from IHME, WHO and literature"
+author: "Astrid Tausen"
+date: today
+format: html
+execute:
+  warning: false
+  message: false
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| label: setup
+#| include: false
+```
+
+```{r}
+#| label: load-packages
+library(here)
+library(tidyverse)
+library(countrycode)
+```
+
+```{r}
+#| label: configuration
+
+# Directories
+path_raw <- here("data", "raw") # input
+path_intermediate <- here("data", "intermediate") # ouput
+
+if (!dir.exists(path_intermediate)) {
+  dir.create(path_intermediate, recursive = TRUE)
+}
+```
+
+```{r}
+#| label: get-raw-data
+
+ihme_inc_raw <- read_csv(here(path_raw, "ihme_tb_incidence.csv"))
+ihme_prev_raw <- read_csv(here(path_raw, "ihme_tb_prevalence.csv"))
+who_burden_raw <- read_csv(here(path_raw,  "who_tb_burden.csv"))
+
+# To get just the data object called All from the .Rdata file, which contains ARI est.:
+temp_env <- new.env()
+load(here(path_raw, "ari_estimates.Rdata"), envir = temp_env)
+ari_estimates_raw <- temp_env$All
+rm(temp_env)
+```
+
+```{r}
+#| label: prep-ari-estimates
+
+# ari_estimates contains 6 columns: iso3, year, ari, E, lari and type. ari is on natural 
+# scale, E is the coefficient of variation, lari is on log scale, and type is either
+# "Prevalence estimate" or "TST survey". The standard error on the log scale is approximately
+# the same as the coefficient of variation (Delta method), so we use E as lari_se.
+
+ari_estimates <- ari_estimates_raw |>
+  filter(type == "TST survey") |>
+  mutate(
+    iso3 = as.character(iso3),
+    country = countrycode(iso3, origin = "iso3c", destination = "country.name"),
+    sub_region = countrycode(iso3, origin = "iso3c", destination = "un.regionsub.name"),
+    region = countrycode(iso3, origin = "iso3c", destination = "un.region.name"),
+    year = round(year, 0),
+    ari_se = E * ari, # standard error on natural scale
+    lari_se = E,
+  ) |>
+  select(
+    country,
+    iso3,
+    sub_region,
+    region,
+    year,
+    ari,
+    ari_se,
+    lari,
+    lari_se
+  ) |>
+  as_tibble()
+```
+
+```{r}
+#| label: prep-ihme-prevalence
+
+# ihme_prev contains 18 columns, only a few of them are of interest.
+# These are: location_name (country/territory name), year, val (point estimate of the
+# prevalence of all types of TB, measured in percent 0-100%, upper and lower are UI bounds.
+
+ihme_prev <- ihme_prev_raw |>
+  mutate(
+    country = location_name,
+    iso3 = countrycode(location_name,
+                       origin = "country.name",
+                       destination = "iso3c",
+                       warn = TRUE),
+    
+    sub_region = countrycode(iso3,
+                             origin = "iso3c",
+                             destination = "un.regionsub.name"),
+    
+    region = countrycode(iso3,
+                         origin = "iso3c",
+                         destination = "un.region.name"),
+    
+    # Taiwan:
+    sub_region = if_else(iso3 == "TWN", "Eastern Asia", sub_region),
+    region = ifelse(iso3 == "TWN", "Asia", region),
+    
+    prev = val / 100, # Ensure proportion between 0 and 1 instead of 0-100%
+    prev_se = (upper/100 - lower/100) / 3.92, # 95% CI, I think
+    lprev = log(prev),
+    lprev_se = prev_se / prev, # Approximate SE in log space, delta method
+  ) |>
+  select(
+    country,
+    iso3,
+    sub_region,
+    region,
+    year,
+    prev,
+    prev_se,
+    lprev,
+    lprev_se
+  ) |>
+  as_tibble()
+```
+
+```{r}
+#| label: prep-ihme-incidence
+
+# Incidence estimates will be used later for exploratory purposes. The columns are almost
+# the same as in the prevalence data, but now we have an estimated incidence as a rate per
+# 100,000 people each year instead.
+
+ihme_inc <- ihme_inc_raw |>
+  mutate(
+    country = location_name,
+    iso3 = countrycode(location_name,
+                       origin = "country.name",
+                       destination = "iso3c",
+                       warn = TRUE),
+    
+    sub_region = countrycode(iso3,
+                             origin = "iso3c",
+                             destination = "un.regionsub.name"),
+    
+    region = countrycode(iso3,
+                         origin = "iso3c",
+                         destination = "un.region.name"),
+    
+    # Taiwan:
+    sub_region = if_else(iso3 == "TWN", "Eastern Asia", sub_region),
+    region = ifelse(iso3 == "TWN", "Asia", region),
+    
+    inc = val / 100000, # Ensure proportion between 0 and 1 instead of rate per 100,000
+    inc_se = (upper/100000 - lower/100000) / 3.92, # 95% CI, I think
+    linc = log(inc),
+    linc_se = inc_se / inc, # Approximate SE in log space, delta method
+  ) |>
+  select(
+    country,
+    iso3,
+    sub_region,
+    region,
+    year,
+    inc,
+    inc_se,
+    linc,
+    linc_se
+  ) |>
+  as_tibble()
+```
+
+```{r}
+#| label: prep-who-data
+
+# This is WHO data for future purposes. Incidence for exploratory comparisons, 
+# CDR and HIV proportions to estimate the proportion of smear positive cases at some point.
+# At some point in the future, it may be relevant to include sex- and age as well,
+# both to create better estimates of smear positivity, but also to account for different
+# mixing patterns.
+
+who_burden <- who_burden_raw |>
+  mutate(
+    sub_region = countrycode(iso3,
+                             origin = "iso3c",
+                             destination = "un.regionsub.name"),
+    
+    region = countrycode(iso3,
+                         origin = "iso3c",
+                         destination = "un.region.name"),
+    
+    # Taiwan:
+    sub_region = if_else(iso3 == "TWN", "Eastern Asia", sub_region),
+    region = ifelse(iso3 == "TWN", "Asia", region),
+    
+    inc = e_inc_100k / 100000, # Ensure proportion between 0 and 1 instead of rate per 100,000
+    inc_se = (e_inc_100k_hi/100000 - e_inc_100k_lo/100000) / 3.92, # 95% CI, I think
+    linc = log(inc),
+    linc_se = inc_se / inc, # Approximate SE in log space, delta method
+    
+    # Clinical factors to estimate smear positivity
+    
+    # Case detection rate
+    cdr = c_cdr / 100,
+    cdr_se = ((c_cdr_hi - c_cdr_lo) / (100 * 3.92))^2,
+    
+    # HIV prevalence in TB cases
+    tbhiv = e_tbhiv_prct / 100,
+    tbhiv_se = ((e_tbhiv_prct_hi - e_tbhiv_prct_lo) / (100 * 3.92))^2
+  ) |>
+  select(
+    country,
+    iso3,
+    sub_region,
+    region,
+    year,
+    inc,
+    inc_se,
+    linc,
+    linc_se,
+    cdr,
+    cdr_se,
+    tbhiv,
+    tbhiv_se
+  ) |>
+  as_tibble()
+```
+
+```{r}
+#| label: save-data
+saveRDS(ari_estimates, file = here(path_intermediate, "ari_estimates.rds"))
+saveRDS(ihme_prev, file = here(path_intermediate, "ihme_prev.rds"))
+saveRDS(ihme_inc, file = here(path_intermediate, "ihme_inc.rds"))
+saveRDS(who_burden, file = here(path_intermediate, "who_burden.rds"))
+```
