@@ -1,0 +1,36 @@
+# History and R working environments
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# renv specific ignores
+renv/library/
+renv/local/
+renv/staging/
+renv/python/
+
+# Mac-specific hidden files
+.DS_Store
+**/.DS_Store
+
+# Data files
+data/*/*
+!data/raw/README.md
+!data/intermediate/README.md
+!data/processed/README.md
+
+# Stan compiled binaries and C++ artifacts
+# CmdStanR generates executables without extensions on Mac, plus .hpp files
+*.hpp
+*.o
+*.dSYM/
+
+# Stan things
+stan/*
+!stan/*.stan
+!stan/README.md
+
+# Output directories should be generated
+results/
+figures/
