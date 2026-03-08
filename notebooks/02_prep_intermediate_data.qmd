@@ -1,0 +1,217 @@
+---
+title: "Preparation of input for stan" 
+comment: "This notebook takes cleaned datasets of RDS type and processes them into the lists that stan works with"
+comment: "Data is prepared for two models: cholesky_exact_gpr.stan and hilbert_approx_gpr.stan"
+comment: "If running the exact GPR, make sure to choose the right subregion under configuration-and-priors!"
+author: "Astrid Tausen"
+date: today
+format: html
+execute:
+  warning: false
+  message: false
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| label: load-packages
+library(here)
+library(tidyverse)
+```
+
+```{r}
+#| label: configuration
+
+path_intermediate <- here("data", "intermediate")
+path_processed    <- here("data", "processed")
+
+if (!dir.exists(path_processed)) {
+  dir.create(path_processed, recursive = TRUE)
+}
+
+# Change timeline for trajectories and subregion for exact GPR here (will not affect the Hilbert space approximate GPR):
+target_region <- "Eastern Asia"
+
+start_year <- 1930
+end_year <- 2025
+normalize_time <- TRUE # Always use TRUE!! 
+
+model_id <- format(Sys.time(), "%Y%m%d_%H%M%S")
+
+```
+
+```{r}
+#| label: load-intermediate-data
+
+ari_estimates  <- readRDS(here(path_intermediate, "ari_estimates.rds"))
+ihme_prev <- readRDS(here(path_intermediate, "ihme_prev.rds"))
+```
+
+```{r}
+#| label: setup-timeline
+
+# Sequence of years the trajectories are generated for
+all_years <- seq(start_year, end_year)
+
+if (normalize_time) {
+  x_time <- (all_years - min(all_years)) / (max(all_years) - min(all_years))
+} else {
+  x_time <- all_years
+}
+
+x_time <- as.numeric(x_time)
+
+```
+
+```{r}
+#| label: build-spatial-dictionary
+
+# Get a unique map of region -> subregion -> country
+hierarchy_dict <- ihme_prev |>
+  select(region, sub_region, iso3) |>
+  drop_na() |>
+  distinct() |>
+  arrange(region, sub_region, iso3) # Alphabetical sorting
+
+# Get names in sorted order
+regions <- unique(hierarchy_dict$region)
+subregions <- unique(hierarchy_dict$sub_region)
+countries <- unique(hierarchy_dict$iso3)
+```
+
+```{r}
+#| label: create-stan-indices
+
+# Map every subregion to its parent region
+subregion_map <- hierarchy_dict |>
+  select(region, sub_region) |>
+  distinct() |>
+  mutate(
+    region_id = match(region, regions),
+    subregion_id = match(sub_region, subregions)
+  ) |>
+  arrange(subregion_id)
+
+stan_subregion_to_region <- subregion_map$region_id
+
+# Map every country to its parent subregion
+country_map <- hierarchy_dict |>
+  mutate(
+    subregion_id = match(sub_region, subregions),
+    country_id = match(iso3, countries)
+  ) |>
+  arrange(country_id)
+
+stan_country_to_subregion <- country_map$subregion_id
+```
+
+```{r}
+#| label: index-observations
+
+# Index ARI
+dat_ari <- ari_estimates |>
+  filter(iso3 %in% countries, year %in% all_years) |>
+  mutate(
+    country_id = match(iso3, countries),
+    year_id = match(year, all_years)
+  ) |>
+  drop_na(lari, lari_se) 
+
+# Index prevalence
+dat_prev <- ihme_prev |>
+  filter(iso3 %in% countries, year %in% all_years) |>
+  mutate(
+    country_id = match(iso3, countries),
+    year_id = match(year, all_years)
+  ) |>
+  drop_na(lprev, lprev_se)
+```
+
+```{r}
+#| label: spatial-temporal-sets-cholesky
+
+# Get only the right subregion
+df_ari_chol <- ari_estimates |> filter(sub_region == target_region)
+df_prev_chol <- ihme_prev |> filter(sub_region == target_region)
+
+years_chol <- sort(unique(c(df_ari_chol$year, df_prev_chol$year)))
+countries_chol <- sort(unique(c(df_ari_chol$iso3, df_prev_chol$iso3)))
+
+df_ari_chol$year_id <- match(df_ari_chol$year, years_chol)
+df_ari_chol$country_id <- match(df_ari_chol$iso3, countries_chol)
+
+df_prev_chol$year_id <- match(df_prev_chol$year, years_chol)
+df_prev_chol$country_id <- match(df_prev_chol$iso3, countries_chol)
+
+# Distance matrix (years)
+time_dist_sq <- as.matrix(dist(years_chol, method = "euclidean"))^2
+```
+
+```{r}
+#| label: assemble-cholesky-list
+cholesky_dat_list <- list(
+  N_years = length(years_chol),
+  N_countries = length(countries_chol),
+  
+  N_ari = nrow(df_ari_chol),
+  log_ari = df_ari_chol$lari, 
+  ari_se = df_ari_chol$lari_se,
+  ari_year = df_ari_chol$year_id,
+  ari_country = df_ari_chol$country_id,
+  
+  N_prev = nrow(df_prev_chol),
+  log_prev = df_prev_chol$lprev,
+  prev_se = df_prev_chol$lprev_se,
+  prev_year = df_prev_chol$year_id,
+  prev_country = df_prev_chol$country_id,
+  
+  distance_matrix = time_dist_sq
+)
+
+output_filename_chol <- paste0("cholesky_dat_list_", model_id, ".rds")
+saveRDS(cholesky_dat_list, here(path_processed, output_filename_chol))
+
+print(paste("List for stan is saved in data/processed:", output_filename_chol))
+```
+
+```{r}
+#| label: assemble-hilbert-list
+
+stan_dat_list <- list(
+  N_years = length(all_years),
+  x_time = x_time,
+  N_regions = length(regions),
+  N_subregions = length(subregions),
+  N_countries = length(countries),
+  
+  country_to_subregion = stan_country_to_subregion,
+  subregion_to_region = stan_subregion_to_region,
+
+  N_ari = nrow(dat_ari),
+  log_ari = dat_ari$lari,
+  ari_se = dat_ari$lari_se,             
+  ari_year = dat_ari$year_id,
+  ari_country = dat_ari$country_id,
+  
+  N_prev = nrow(dat_prev),
+  log_prev = dat_prev$lprev,
+  prev_se = dat_prev$lprev_se,    
+  prev_year = dat_prev$year_id,
+  prev_country = dat_prev$country_id
+)
+
+output_filename <- paste0("hsgp_dat_list_", model_id, ".rds")
+saveRDS(stan_dat_list, here(path_processed, output_filename))
+
+# Also save a mapping file so we know which indices correspond to which strings
+mapping_list <- list(
+  regions = regions,
+  subregions = subregions,
+  countries = countries,
+  years = all_years
+)
+saveRDS(mapping_list, here(path_processed, paste0("mapping_dict_", model_id, ".rds")))
+
+print(paste("List for stan is saved in data/processed:", output_filename))
+
+```

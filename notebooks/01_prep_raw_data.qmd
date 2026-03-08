@@ -10,10 +10,6 @@ editor_options:
   chunk_output_type: console
 ---
 
-```{r}
-#| label: setup
-#| include: false
-```
 
 ```{r}
 #| label: load-packages
@@ -41,7 +37,7 @@ ihme_inc_raw <- read_csv(here(path_raw, "ihme_tb_incidence.csv"))
 ihme_prev_raw <- read_csv(here(path_raw, "ihme_tb_prevalence.csv"))
 who_burden_raw <- read_csv(here(path_raw,  "who_tb_burden.csv"))
 
-# To get just the data object called All from the .Rdata file, which contains ARI est.:
+# To get just the data object called All from the .Rdata file, which contains ARI est. from Houben & Dodd (2016):
 temp_env <- new.env()
 load(here(path_raw, "ari_estimates.Rdata"), envir = temp_env)
 ari_estimates_raw <- temp_env$All

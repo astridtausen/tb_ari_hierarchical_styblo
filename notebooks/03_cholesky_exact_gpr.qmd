@@ -1,0 +1,87 @@
+---
+title: "First simple hierarchical model - with exact GPR"
+author: "Astrid Tausen"
+date: today
+format: html
+execute:
+  warning: false
+  message: false
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| label: load-packages
+library(here)
+library(tidyverse)
+library(cmdstanr)
+library(bayesplot)
+library(tidybayes)
+```
+
+```{r}
+#| label: configuration
+
+data_file_name <- "cholesky_dat_list_20260308_102826.rds" # Choose right file here
+stan_file_name <- "cholesky_exact_gpr.stan"
+
+path_processed <- here("data", "processed")
+path_stan      <- here("stan")
+path_results   <- here("data", "results")
+
+if (!dir.exists(path_results)) {
+  dir.create(path_results, recursive = TRUE)
+}
+```
+
+```{r}
+#| label: load-data
+dat_list <- readRDS(here(path_processed, data_file_name))
+model_id <- str_extract(data_file_name, "\\d{8}_\\d{6}")
+```
+
+```{r}
+#| label: compile-model
+mod <- cmdstan_model(here(path_stan, stan_file_name))
+```
+
+
+```{r}
+#| label: sample-prior-measure
+
+dat_list$prior_only <- 1 
+
+fit_prior <- mod$sample(
+  data = dat_list,
+  chains = 4,
+  parallel_chains = 4, 
+  iter_warmup = 1000,
+  iter_sampling = 1000,
+  seed = 1045,
+  refresh = 500
+)
+
+fit_prior$save_object(here(path_results, paste0("fit_prior_", model_id, ".rds")))
+```
+
+```{r}
+#| label: sample-posterior-measure
+
+dat_list$prior_only <- 0 
+
+fit_posterior <- mod$sample(
+  data = dat_list,
+  chains = 4,
+  parallel_chains = 4, 
+  iter_warmup = 1000,
+  iter_sampling = 1000,
+  seed = 1045,
+  
+  adapt_delta = 0.90, 
+  max_treedepth = 11,
+  refresh = 500,
+  save_cmdstan_config = TRUE
+)
+
+fit_posterior$save_object(here(path_results, paste0("fit_posterior_", model_id, ".rds")))
+```
