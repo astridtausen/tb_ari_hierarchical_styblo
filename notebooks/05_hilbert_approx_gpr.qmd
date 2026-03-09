@@ -1,0 +1,146 @@
+---
+title: "Hilber space approximate GPR"
+author: "Astrid Tausen"
+date: today
+format: html
+execute:
+  warning: false
+  message: false
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| label: load-packages
+library(here)
+library(stringr)
+library(cmdstanr)
+```
+
+```{r}
+#| label: configuration
+
+# Model identification:
+data_file_name <- "xxxx.rds" # Choose right file here, has to be 3 level data
+stan_file_name <- "hilbert_approx_gpr.stan" # Choose stan model to run
+data_id <- str_extract(data_file_name, "\\d{8}_\\d{6}")
+model_type <- str_remove(stan_file_name, "\\.stan$")
+run_id <- format(Sys.time(), "%Y%m%d_%H%M%S")
+
+path_processed <- here("data", "processed")
+path_stan      <- here("stan")
+path_results   <- here("data", "results")
+
+if (!dir.exists(path_results)) {
+  dir.create(path_results, recursive = TRUE)
+}
+
+# CHANGE PARAMETERS HERE:
+mean_trend_type <- "linear" # Choose linear or constant
+normalize_time <- TRUE # Use TRUE
+
+# Hilbert space decisions:
+basis_functions <- 20 # Dimensionality/number of basis functions in hilbert space
+boundary_extension_factor <- 1.5 # Boundary factor
+
+# Priors for GP:
+prior_alpha_mean <- -4.0 
+prior_alpha_sd <- 1.5 
+prior_beta_slope_mean <- 0 
+prior_beta_slope_sd <- 0.5
+
+# Priors for GP hyperparameters:
+# Kernel scale
+prior_sigma_K_mu <- log(0.5) 
+prior_sigma_K_sigma <- 1.0  
+
+# Length scale, make sure to check values make sense on the scale you're working with
+if (normalize_time) {
+  # If normalized:
+  prior_l_mu <- log(0.3)
+  prior_l_sigma <- 0.2
+} else {
+  # If not normalized:
+  prior_l_mu <- log(27.0)
+  prior_l_sigma <- 0.5
+}
+
+# Styblo ratio
+prior_mu_global_ratio_mean <- 1.678
+prior_mu_global_ratio_sd <- 0.371
+
+# Regularization scale for the ultrametric (hierarchical) distances
+prior_hier_sd <- 0.2
+```
+
+```{r}
+#| label: load-data
+dat_list <- readRDS(here(path_processed, data_file_name))
+```
+
+```{r}
+#| label: add-model-decisions
+
+dat_list$M <- basis_functions
+dat_list$c <- boundary_extension_factor
+dat_list$prior_alpha_mean <- prior_alpha_mean
+dat_list$prior_alpha_sd <- prior_alpha_sd
+dat_list$prior_beta_slope_mean <- prior_beta_slope_mean
+dat_list$prior_beta_slope_sd <- prior_beta_slope_sd
+dat_list$prior_sigma_K_mu <- prior_sigma_K_mu
+dat_list$prior_sigma_K_sigma <- prior_sigma_K_sigma
+dat_list$prior_l_mu <- prior_l_mu
+dat_list$prior_l_sigma <- prior_l_sigma
+dat_list$prior_mu_global_ratio_mean <- prior_mu_global_ratio_mean
+dat_list$prior_mu_global_ratio_sd <- prior_mu_global_ratio_sd
+dat_list$prior_hier_sd <- prior_hier_sd
+dat_list$linear <- ifelse(mean_trend_type == "linear", 1, 0)
+```
+
+```{r}
+#| label: compile-model
+
+mod <- cmdstan_model(here(path_stan, stan_file_name))
+```
+
+```{r}
+#| label: sample-prior-measure
+
+dat_list$prior_only <- 1 
+
+fit_prior <- mod$sample(
+  data = dat_list,
+  chains = 4,
+  parallel_chains = 4,
+  iter_warmup = 1000,
+  iter_sampling = 1000,
+  seed = 1045, 
+  refresh = 500
+)
+
+output_name_prior <- paste0("prior_", model_type, "_data_", data_id, "_run_", run_id, ".rds")
+fit_prior$save_object(here(path_results, output_name_prior))
+
+```
+
+```{r}
+#| label: sample-posterior-measure
+
+dat_list$prior_only <- 0 
+
+fit_posterior <- mod$sample(
+  data = dat_list,
+  chains = 4,
+  parallel_chains = 4, 
+  iter_warmup = 1000,
+  iter_sampling = 1000,
+  seed = 1045,
+  adapt_delta = 0.90, 
+  max_treedepth = 11, 
+  refresh = 500,
+  save_cmdstan_config = TRUE
+)
+
+output_name_posterior <- paste0("posterior_", model_type, "_data_", data_id, "_run_", run_id, ".rds")
+fit_posterior$save_object(here(path_results, output_name_posterior))
+```

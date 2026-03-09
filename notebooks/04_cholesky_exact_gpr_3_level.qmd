@@ -1,0 +1,96 @@
+---
+title: "Exact GPR with 3 levels - very heavy!"
+comment: "Not sure we have enough RAM"
+author: "Astrid Tausen"
+date: today
+format: html
+execute:
+  warning: false
+  message: false
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| label: load-packages
+library(here)
+library(stringr)
+library(cmdstanr)
+```
+
+```{r}
+#| label: configuration
+
+# Model identification:
+data_file_name <- "xxxx.rds" # Choose right file here, has to be 3 level data
+stan_file_name <- "cholesky_exact_gpr_3_level.stan" # Choose stan model to run
+data_id <- str_extract(data_file_name, "\\d{8}_\\d{6}")
+model_type <- str_remove(stan_file_name, "\\.stan$")
+run_id <- format(Sys.time(), "%Y%m%d_%H%M%S")
+
+path_processed <- here("data", "processed")
+path_stan      <- here("stan")
+path_results   <- here("data", "results")
+
+if (!dir.exists(path_results)) {
+  dir.create(path_results, recursive = TRUE)
+}
+```
+
+```{r}
+#| label: load-data
+dat_list <- readRDS(here(path_processed, data_file_name))
+```
+
+```{r}
+#| label: compile-model
+
+mod <- cmdstan_model(here(path_stan, stan_file_name))
+```
+
+```{r}
+#| label: sample-prior-measure
+
+dat_list$prior_only <- 1 
+
+fit_prior <- mod$sample(
+  data = dat_list,
+  chains = 4,
+  parallel_chains = 2,
+  iter_warmup = 1000,
+  iter_sampling = 1000,
+  seed = 1045, 
+  refresh = 500
+)
+
+output_name_prior <- paste0("prior_", model_type, "_data_", data_id, "_run_", run_id, ".rds")
+fit_prior$save_object(here(path_results, output_name_prior))
+
+```
+
+```{r}
+#| label: sample-posterior-measure
+
+dat_list$prior_only <- 0 
+
+start_time <- Sys.time() # Let's keep track of how long this takes if it finishes
+
+fit_posterior <- mod$sample(
+  data = dat_list,
+  chains = 4,
+  parallel_chains = 2, # Very heavy model!
+  iter_warmup = 1000,
+  iter_sampling = 1000,
+  seed = 1045,
+  adapt_delta = 0.90, 
+  max_treedepth = 11, 
+  refresh = 50,
+  save_cmdstan_config = TRUE
+)
+
+end_time <- Sys.time()
+print(paste("Posterior sampling execution time:", round(difftime(end_time, start_time, units = "mins"), 2), "minutes"))
+
+output_name_posterior <- paste0("posterior_", model_type, "_data_", data_id, "_run_", run_id, ".rds")
+fit_posterior$save_object(here(path_results, output_name_posterior))
+```

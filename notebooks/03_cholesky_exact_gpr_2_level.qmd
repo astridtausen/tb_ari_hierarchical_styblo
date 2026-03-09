@@ -1,5 +1,5 @@
 ---
-title: "First simple hierarchical model - with exact GPR"
+title: "First simple hierarchical model - with exact GPR and two levels"
 author: "Astrid Tausen"
 date: today
 format: html
@@ -13,18 +13,22 @@ editor_options:
 ```{r}
 #| label: load-packages
 library(here)
-library(tidyverse)
+library(stringr)
 library(cmdstanr)
-library(bayesplot)
-library(tidybayes)
 ```
 
 ```{r}
 #| label: configuration
 
-data_file_name <- "cholesky_dat_list_20260308_102826.rds" # Choose right file here
-stan_file_name <- "cholesky_exact_gpr.stan"
+# Model identification:
+data_file_name <- "xxxx.rds" # Choose right file here, begins with stan_list_2_level_
+data_id <- str_extract(data_file_name, "\\d{8}_\\d{6}") # Get data timestamp
 
+stan_file_name <- "cholesky_exact_gpr_2_level.stan"
+model_type <- str_remove(stan_file_name, "\\.stan$")
+run_id <- format(Sys.time(), "%Y%m%d_%H%M%S") # Generate run timestamp
+
+# Paths:
 path_processed <- here("data", "processed")
 path_stan      <- here("stan")
 path_results   <- here("data", "results")
@@ -32,12 +36,15 @@ path_results   <- here("data", "results")
 if (!dir.exists(path_results)) {
   dir.create(path_results, recursive = TRUE)
 }
+
+# I should add parameters and priors here instead of hardcoding them in the stan model, I think 
+# Could also have option to choose between linear and constant mean trend here - right now it's just constant
+
 ```
 
 ```{r}
 #| label: load-data
 dat_list <- readRDS(here(path_processed, data_file_name))
-model_id <- str_extract(data_file_name, "\\d{8}_\\d{6}")
 ```
 
 ```{r}
@@ -61,7 +68,8 @@ fit_prior <- mod$sample(
   refresh = 500
 )
 
-fit_prior$save_object(here(path_results, paste0("fit_prior_", model_id, ".rds")))
+output_name_prior <- paste0("prior_", model_type, "_data_", data_id, "run", run_id, ".rds")
+fit_prior$save_object(here(path_results, output_name_prior))
 ```
 
 ```{r}
@@ -76,12 +84,12 @@ fit_posterior <- mod$sample(
   iter_warmup = 1000,
   iter_sampling = 1000,
   seed = 1045,
-  
   adapt_delta = 0.90, 
   max_treedepth = 11,
   refresh = 500,
   save_cmdstan_config = TRUE
 )
 
-fit_posterior$save_object(here(path_results, paste0("fit_posterior_", model_id, ".rds")))
+output_name_posterior <- paste0("posterior_", model_type, "_data_", data_id, "_run_", run_id, ".rds")
+fit_posterior$save_object(here(path_results, output_name_posterior))
 ```

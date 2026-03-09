@@ -1,8 +1,7 @@
 ---
 title: "Preparation of input for stan" 
 comment: "This notebook takes cleaned datasets of RDS type and processes them into the lists that stan works with"
-comment: "Data is prepared for two models: cholesky_exact_gpr.stan and hilbert_approx_gpr.stan"
-comment: "If running the exact GPR, make sure to choose the right subregion under configuration-and-priors!"
+
 author: "Astrid Tausen"
 date: today
 format: html
@@ -29,9 +28,10 @@ if (!dir.exists(path_processed)) {
   dir.create(path_processed, recursive = TRUE)
 }
 
-# Change timeline for trajectories and subregion for exact GPR here (will not affect the Hilbert space approximate GPR):
+# Choose subregion for 2 level exact GPR here (will not affect other models):
 target_region <- "Eastern Asia"
 
+# Timeline for trajectories:
 start_year <- 1930
 end_year <- 2025
 normalize_time <- TRUE # Always use TRUE!! 
@@ -63,6 +63,61 @@ x_time <- as.numeric(x_time)
 
 ```
 
+**Two level model (country and UN subregion)**
+
+In the following section, the distance matrix and the list for stan is created for the first, simple Bayesian model with a 2-level hierarchical prior on the Styblo ratio. The distance matrix is created manually with squared euclidian distance between years.
+
+```{r}
+#| label: spatial-temporal-sets-2-level
+
+# Get only the right subregion for exact GPR
+df_ari_chol <- ari_estimates |> filter(sub_region == target_region)
+df_prev_chol <- ihme_prev |> filter(sub_region == target_region)
+
+years_chol <- sort(unique(c(df_ari_chol$year, df_prev_chol$year)))
+countries_chol <- sort(unique(c(df_ari_chol$iso3, df_prev_chol$iso3)))
+
+df_ari_chol$year_id <- match(df_ari_chol$year, years_chol)
+df_ari_chol$country_id <- match(df_ari_chol$iso3, countries_chol)
+
+df_prev_chol$year_id <- match(df_prev_chol$year, years_chol)
+df_prev_chol$country_id <- match(df_prev_chol$iso3, countries_chol)
+
+# Distance matrix (years)
+time_dist_sq <- as.matrix(dist(years_chol, method = "euclidean"))^2
+```
+
+```{r}
+#| label: assemble-stan-list-2-level
+cholesky_dat_list <- list(
+  N_years = length(years_chol),
+  N_countries = length(countries_chol),
+  
+  N_ari = nrow(df_ari_chol),
+  log_ari = df_ari_chol$lari, 
+  ari_se = df_ari_chol$lari_se,
+  ari_year = df_ari_chol$year_id,
+  ari_country = df_ari_chol$country_id,
+  
+  N_prev = nrow(df_prev_chol),
+  log_prev = df_prev_chol$lprev,
+  prev_se = df_prev_chol$lprev_se,
+  prev_year = df_prev_chol$year_id,
+  prev_country = df_prev_chol$country_id,
+  
+  distance_matrix = time_dist_sq
+)
+
+output_filename_chol <- paste0("stan_list_2_level_", model_id, ".rds")
+saveRDS(cholesky_dat_list, here(path_processed, output_filename_chol))
+
+print(paste("List for stan is saved in data/processed:", output_filename_chol))
+```
+
+**Three level model (country, UN subregion and UN region)**
+
+For the three level models, I have used stan's function gp_exp_quad_cov(), which is why the distance matrix isn't created manually.
+
 ```{r}
 #| label: build-spatial-dictionary
 
@@ -71,9 +126,8 @@ hierarchy_dict <- ihme_prev |>
   select(region, sub_region, iso3) |>
   drop_na() |>
   distinct() |>
-  arrange(region, sub_region, iso3) # Alphabetical sorting
+  arrange(region, sub_region, iso3)
 
-# Get names in sorted order
 regions <- unique(hierarchy_dict$region)
 subregions <- unique(hierarchy_dict$sub_region)
 countries <- unique(hierarchy_dict$iso3)
@@ -128,54 +182,7 @@ dat_prev <- ihme_prev |>
 ```
 
 ```{r}
-#| label: spatial-temporal-sets-cholesky
-
-# Get only the right subregion
-df_ari_chol <- ari_estimates |> filter(sub_region == target_region)
-df_prev_chol <- ihme_prev |> filter(sub_region == target_region)
-
-years_chol <- sort(unique(c(df_ari_chol$year, df_prev_chol$year)))
-countries_chol <- sort(unique(c(df_ari_chol$iso3, df_prev_chol$iso3)))
-
-df_ari_chol$year_id <- match(df_ari_chol$year, years_chol)
-df_ari_chol$country_id <- match(df_ari_chol$iso3, countries_chol)
-
-df_prev_chol$year_id <- match(df_prev_chol$year, years_chol)
-df_prev_chol$country_id <- match(df_prev_chol$iso3, countries_chol)
-
-# Distance matrix (years)
-time_dist_sq <- as.matrix(dist(years_chol, method = "euclidean"))^2
-```
-
-```{r}
-#| label: assemble-cholesky-list
-cholesky_dat_list <- list(
-  N_years = length(years_chol),
-  N_countries = length(countries_chol),
-  
-  N_ari = nrow(df_ari_chol),
-  log_ari = df_ari_chol$lari, 
-  ari_se = df_ari_chol$lari_se,
-  ari_year = df_ari_chol$year_id,
-  ari_country = df_ari_chol$country_id,
-  
-  N_prev = nrow(df_prev_chol),
-  log_prev = df_prev_chol$lprev,
-  prev_se = df_prev_chol$lprev_se,
-  prev_year = df_prev_chol$year_id,
-  prev_country = df_prev_chol$country_id,
-  
-  distance_matrix = time_dist_sq
-)
-
-output_filename_chol <- paste0("cholesky_dat_list_", model_id, ".rds")
-saveRDS(cholesky_dat_list, here(path_processed, output_filename_chol))
-
-print(paste("List for stan is saved in data/processed:", output_filename_chol))
-```
-
-```{r}
-#| label: assemble-hilbert-list
+#| label: assemble-stan-list_3_level
 
 stan_dat_list <- list(
   N_years = length(all_years),
@@ -200,7 +207,7 @@ stan_dat_list <- list(
   prev_country = dat_prev$country_id
 )
 
-output_filename <- paste0("hsgp_dat_list_", model_id, ".rds")
+output_filename <- paste0("stan_list_3_level_", model_id, ".rds")
 saveRDS(stan_dat_list, here(path_processed, output_filename))
 
 # Also save a mapping file so we know which indices correspond to which strings
