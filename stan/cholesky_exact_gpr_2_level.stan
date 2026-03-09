@@ -56,7 +56,7 @@ transformed parameters {
       }
     }
     
-    // Fill diagonal with variance + standard numerical nugget for Cholesky stability
+    // Fill diagonal with variance + numerical nugget for Cholesky stability
     for (i in 1:N_years) {
       SIGMA[i, i] = square(sigma_K) + 1e-6; 
     }
