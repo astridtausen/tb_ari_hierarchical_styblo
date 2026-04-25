@@ -28,8 +28,8 @@ if (!dir.exists(path_processed)) {
   dir.create(path_processed, recursive = TRUE)
 }
 
-# Choose subregion for 2 level exact GPR here (will not affect other models):
-target_region <- "Eastern Asia"
+# Choose subregion for first 2 level exact GPR here (will not affect other models):
+target_region <- "Western Asia"
 
 # Timeline for trajectories:
 start_year <- 1930
@@ -45,6 +45,7 @@ model_id <- format(Sys.time(), "%Y%m%d_%H%M%S")
 
 ari_estimates  <- readRDS(here(path_intermediate, "ari_estimates.rds"))
 ihme_prev <- readRDS(here(path_intermediate, "ihme_prev.rds"))
+who_burden <- readRDS(here(path_intermediate, "who_burden.rds"))
 ```
 
 ```{r}
@@ -221,4 +222,101 @@ saveRDS(mapping_list, here(path_processed, paste0("mapping_dict_", model_id, ".r
 
 print(paste("List for stan is saved in data/processed:", output_filename))
 
+```
+
+**Three level WHO-model**
+
+In the following we prepare a three level model with a country, a WHO region and a global level. It takes incidence data from 2000 and onwards.
+
+```{r}
+#| label: get-who-incidence-3-level
+
+region_map <- who_burden |> 
+  select(iso3, who_region) |> 
+  drop_na() |> 
+  distinct()
+
+dat_inc_crg <- who_burden |>
+  drop_na(who_linc, who_linc_se)
+
+# Build spatial dictionary
+hierarchy_dict <- dat_inc_crg |>
+  select(who_region, iso3) |>
+  drop_na() |>
+  distinct() |>
+  arrange(who_region, iso3)
+
+regions_crg <- unique(hierarchy_dict$who_region)
+countries_crg <- unique(hierarchy_dict$iso3)
+
+# Map country to region
+country_map <- hierarchy_dict |>
+  mutate(
+    region_id = match(who_region, regions_crg),
+    country_id = match(iso3, countries_crg)
+  ) |>
+  arrange(country_id)
+
+stan_country_to_region <- country_map$region_id
+```
+
+```{r}
+#| label: index-observations-who-3-level
+
+# Index incidence by Country
+dat_inc_crg <- dat_inc_crg |>
+  filter(iso3 %in% countries_crg, year %in% all_years) |>
+  # Exclude FRA 2003: Has an in_se of exactly 0, 
+  filter(!(iso3 == "FRA" & year == 2003)) |>
+  mutate(
+    country_id = match(iso3, countries_crg),
+    year_id = match(year, all_years)
+  )
+
+# Map regions, filter by country, and index ARI data
+dat_ari_crg <- ari_estimates |>
+  left_join(region_map, by = "iso3") |>
+  filter(iso3 %in% countries_crg, year %in% all_years) |>
+  drop_na(lari, lari_se) |>
+  mutate(
+    country_id = match(iso3, countries_crg),
+    year_id = match(year, all_years)
+  )
+```
+
+```{r}
+#| label: assemble-stan-list-who-3-level
+
+stan_dat_list_crg <- list(
+  N_years = length(all_years),
+  x_time = x_time,
+  
+  N_regions = length(regions_crg),
+  N_countries = length(countries_crg),
+  country_to_region = stan_country_to_region,
+  
+  N_ari = nrow(dat_ari_crg),
+  log_ari = dat_ari_crg$lari,
+  ari_se = dat_ari_crg$lari_se,             
+  ari_year = dat_ari_crg$year_id,
+  ari_country = dat_ari_crg$country_id,
+  
+  N_inc = nrow(dat_inc_crg),
+  log_inc = dat_inc_crg$who_linc,
+  inc_se = dat_inc_crg$who_linc_se,    
+  inc_year = dat_inc_crg$year_id,
+  inc_country = dat_inc_crg$country_id
+)
+
+output_filename_crg <- paste0("stan_list_who_3_level_", model_id, ".rds")
+saveRDS(stan_dat_list_crg, here(path_processed, output_filename_crg))
+
+mapping_list_crg <- list(
+  regions = regions_crg,
+  countries = countries_crg,
+  years = all_years
+)
+saveRDS(mapping_list_crg, here(path_processed, paste0("mapping_dict_who_3_level_", model_id, ".rds")))
+
+print(paste("List for stan is saved in data/processed:", output_filename_crg))
 ```
