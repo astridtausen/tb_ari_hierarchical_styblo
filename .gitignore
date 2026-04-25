@@ -10,6 +10,15 @@ renv/local/
 renv/staging/
 renv/python/
 
+# R environment variables and macOS GUI history
+.Renviron
+.Rapp.history
+
+# Quarto and RMarkdown compilation artifacts
+.quarto/
+*_cache/
+*_files/
+
 # Mac-specific hidden files
 .DS_Store
 **/.DS_Store
@@ -30,6 +39,9 @@ data/*/*
 stan/*
 !stan/*.stan
 !stan/README.md
+
+# Papers and other resources
+resources/
 
 # Output directories should be generated
 results/
