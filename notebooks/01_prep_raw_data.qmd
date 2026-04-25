@@ -188,14 +188,16 @@ who_burden <- who_burden_raw |>
                          origin = "iso3c",
                          destination = "un.region.name"),
     
+    who_region = g_whoregion,
+    
     # Taiwan:
     sub_region = if_else(iso3 == "TWN", "Eastern Asia", sub_region),
     region = ifelse(iso3 == "TWN", "Asia", region),
     
-    inc = e_inc_100k / 100000, # Ensure proportion between 0 and 1 instead of rate per 100,000
-    inc_se = (e_inc_100k_hi/100000 - e_inc_100k_lo/100000) / 3.92, # 95% CI, I think
-    linc = log(inc),
-    linc_se = inc_se / inc, # Approximate SE in log space, delta method
+    who_inc = e_inc_100k / 100000, # Ensure proportion between 0 and 1 instead of rate per 100,000
+    who_inc_se = (e_inc_100k_hi/100000 - e_inc_100k_lo/100000) / 3.92, # 95% CI, I think
+    who_linc = log(who_inc),
+    who_linc_se = who_inc_se / who_inc, # Approximate SE in log space, delta method
     
     # Clinical factors to estimate smear positivity
     
@@ -212,11 +214,12 @@ who_burden <- who_burden_raw |>
     iso3,
     sub_region,
     region,
+    who_region,
     year,
-    inc,
-    inc_se,
-    linc,
-    linc_se,
+    who_inc,
+    who_inc_se,
+    who_linc,
+    who_linc_se,
     cdr,
     cdr_se,
     tbhiv,
